@@ -113,9 +113,9 @@ def rnn_step_forward(x, prev_h, Wx, Wh, b):
     ##########################################################################
     # Replace "pass" statement with your code
     # next_h = tanh(prev_h * Wh + x * Wx + b)
-    a = torch.mm(prev_h, Wh) + torch.mm(x, Wx) + b
-    next_h = torch.tanh(next_h)
-    cache = (x, prev_h, Wx, Wh, a)
+    z = torch.mm(prev_h, Wh) + torch.mm(x, Wx) + b
+    next_h = torch.tanh(z)
+    cache = (x, prev_h, Wx, Wh, z)
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -145,9 +145,9 @@ def rnn_step_backward(dnext_h, cache):
     # terms of the output value from tanh.
     ##########################################################################
     # Replace "pass" statement with your code
-    x, prev_h, Wx, Wh, a = cache
+    x, prev_h, Wx, Wh, z = cache
     # next_h = tanh(prev_h * Wh + x * Wx + b)
-    dz = (1 - torch.tanh(a) ** 2) * dnext_h
+    dz = (1 - torch.tanh(z) ** 2) * dnext_h
     dx = dz.mm(Wx.t())
     dprev_h = dz.mm(Wh.t())
     dWx = x.t().mm(dz)
@@ -186,13 +186,11 @@ def rnn_forward(x, h0, Wx, Wh, b):
     # Replace "pass" statement with your code
     _, T, _ = x.shape
     hi = h0
-    h, cache = [], []
+    cache = []
+    h = torch.empty(0, device=hi.device, dtype=hi.dtype)
     for i in range(T):
       hi, cache_i = rnn_step_forward(x[:,i,:], hi, Wx, Wh, b)
-      if i == 0:
-        h = hi
-      else:
-        h = torch.cat((h, hi), dim = 1)
+      h = torch.cat((h, hi), dim = 1)
       cache.append(cache_i)
     ##########################################################################
     #                             END OF YOUR CODE                           #
@@ -227,17 +225,15 @@ def rnn_backward(dh, cache):
     ##########################################################################
     # Replace "pass" statement with your code
     N, T, H = dh.shape
+    dx, dh0, dWx, dWh, db = 0, 0, 0, 0, 0
     for i in range(T):
       cache_i = cache[-i-1]
       dx_i, dprev_h_i, dWx_i, dWh_i, db_i = rnn_step_backward(dh[-i-1], cache_i)
-      if i == 0:
-        dx, dh0, dWx, dWh, db = dx_i, dprev_h_i, dWx_i, dWh_i, db_i
-      else:
-        dx = dx + dx_i
-        dh0 = dh0 + dprev_h_i
-        dWx = dWx + dWx_i
-        dWh = dWh + dWh_i
-        db = db + db_i
+      dx = dx + dx_i
+      dh0 = dh0 + dprev_h_i
+      dWx = dWx + dWx_i
+      dWh = dWh + dWh_i
+      db = db + db_i
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -330,6 +326,7 @@ class WordEmbedding(nn.Module):
         # TODO: Implement the forward pass for word embeddings.
         ######################################################################
         # Replace "pass" statement with your code
+        # x是(N,T)  W_embed是索引表, 使用x里面的值直接索引W_embed就行,每个索引都是一个D大小的数组
         out = self.W_embed[x]
         ######################################################################
         #                           END OF YOUR CODE                         #
@@ -375,7 +372,9 @@ def temporal_softmax_loss(x, y, ignore_index=None):
     # all timesteps and *averaging* across the minibatch.
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    # for t in range(T):
+    #    loss += F.cross_entropy(x[:,t,:], y[:,t], ignore_index=ignore_index, reduction='sum')
+    loss = F.cross_entropy(x.permute(0, 2, 1), y, ignore_index=ignore_index, reduction="sum") / y.shape[0]
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -446,7 +445,16 @@ class CaptioningRNN(nn.Module):
         # (2) feature projection (from CNN pooled feature to h0)
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        # 不同数字的意义:
+        # input_dim:传入的大小
+        # hidden_dim:隐藏层的大小
+        # wordvec_dim:词向量维度w
+        # vocab_size:词汇表的大小,字典中不同单词的数量
+        self.output_projection = nn.Linear(hidden_dim, vocab_size)
+        if cell_type == "rnn":
+            self.backbone = RNN(wordvec_dim, hidden_dim)
+            self.feature_projection = nn.Linear(input_dim, hidden_dim)
+        self.word_embedding  = WordEmbedding(vocab_size,wordvec_dim)
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -497,7 +505,13 @@ class CaptioningRNN(nn.Module):
         # Do not worry about regularizing the weights or their gradients!
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        # (1)初始化并进入隐藏层:RNN/LSTM:(N,H),att-LSTM:(N,H,4,4)
+        if self.cell_type == "rnn":
+            init_hidden = self.feature_projection(images.reshape(images.shape[0], -1))
+            w_emb = self.word_embedding(captions_in)
+            hn = self.backbone.forward(w_emb, init_hidden)
+            output = self.output_projection(hn)
+            loss = temporal_softmax_loss(output, captions_out, self.ignore_index)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
